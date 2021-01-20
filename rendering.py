@@ -179,7 +179,8 @@ class Renderer:
     def summary(self):
         openTasks = [x for x in self.context.lookup.values() if x.getStatus() != "Done"]
         # highestp = max(openTasks, key=lambda x: x.priority)
-        highestp = min(_allmin(openTasks, key=lambda x: -x.priority if x.priority is not None else date.max), key=lambda x: x.deadline)
+        highestp = min(_allmin(openTasks, key=lambda x: -x.priority if x.priority is not None else date.max),
+                       key=lambda x: x.deadline if x.deadline is not None else date.max)
         countLine = "{tasks} tasks open, highest priority is {num} ({p})".format(
             tasks=len(openTasks),
             num=self.priorityColors(highestp.priority, '#'+str(highestp.num)),

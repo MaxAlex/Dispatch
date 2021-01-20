@@ -202,8 +202,8 @@ class Context:
                 self.lookup[b_num].blocked_by.remove(task.num)
             for t in task.subtasks:
                 self.setTaskStatus(t, "Done")
-        else:
-            task.status = status
+
+        task.status = status
 
     # This can be replaced with call to insertTasks, right?
     def insertTask(self, newtask, parent=None, index=None):
