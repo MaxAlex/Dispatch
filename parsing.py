@@ -142,6 +142,12 @@ def eval_plan(context, task_scope, attribute):
     else:
         raise NotImplementedError
 
+# This ought to ask for confirmation
+def eval_delete(context, items):
+    context.popTasks(items)
+    return "Deleted %d items" % len(items)
+
+
 def evaluate(context, command):
     if command.type == "add_new":
         return eval_new(context, command.item_type, command.attributes, command.ref_task, command.location)
@@ -161,6 +167,8 @@ def evaluate(context, command):
         return eval_cleanup(context, command.tasks, command.arg)
     elif command.type == "plan":
         return eval_plan(context, command.tasks, command.arg)
+    elif command.type == "delete":
+        return eval_delete(context, command.tasks)
     else:
         raise CommandException("Command parsed to an invalid command representation: %s" % command)
 
@@ -189,6 +197,7 @@ SHOW = """show\s*(?P<items>[0-9, -]+)?\s*(?P<details>details)?"""  # TODO more s
 NOTE = """annotate\s*(?P<item>[0-9-]+)"""
 CLEANUP = """cleanup\s*(?P<items>([0-9, -]+|all))\s*(?P<reorder>and reorder)?"""
 PLAN = """plan\s*(?P<target>task [0-9, -]+)\s*(by)?\s(?P<attribute>(newest|oldest|deadline|priority))"""
+DELETE = """delete (?P<items>[0-9, -]+)"""
 
 Command = namedtuple('Command', ['type', 'item_type', 'task', 'tasks', 'ref_task',
                                  'ref_tasks', 'attributes', 'location',
@@ -289,6 +298,9 @@ def parse_toplevel(command):
             tasks = None
         attribute = plancmd.group("attribute")
         return Command("plan", tasks=tasks, arg=attribute)
+    elif plancmd := re.match(DELETE, command):
+        targets = [x.strip() for x in plancmd.group('items').split(',')]
+        return Command("delete", tasks=targets)
     else:
         raise CommandException("Could not parse: %s" % command)
 

@@ -201,7 +201,8 @@ class Context:
 
     def getNextNumber(self):
         try:
-            return max(x.num for x in self.lookup.values())+1
+            top = max(int(x.num) for x in self.lookup.values() if x.num.isdigit())
+            return str(int(top) + 1)
         except ValueError:
             return 1
 
@@ -273,7 +274,10 @@ class Context:
         for num in task_nums:
             t = self.lookup.pop(num)
             if t.parent is not None:
-                self.lookup[t.parent].subtasks.remove(t)
+                if isinstance(t, Task):
+                    self.lookup[t.parent].subtasks.remove(t)
+                else:
+                    self.lookup[t.parent].steps.remove(t)
             else:
                 self.baseTasks.remove(t)
             tasks.append(t)

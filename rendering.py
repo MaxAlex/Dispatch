@@ -183,7 +183,7 @@ class Renderer:
             subtasks = "\n".join([self.renderTask(t, level-1, indent=indent+1) for t in task.subtasks
                                   if (include_done or t.getStatus() != 'Done')])
             substeps = f"\n".join([f"{indentstr}       | " + self.renderStep(s) for s in task.steps]) + '\n'
-            
+
             # TODO once Renderer is made aware of screen size, properly right-justify this?
             if task.note:
                 if ('\n' in task.note.strip()) or len(task.note.split('\n')[0]) >= 60:
