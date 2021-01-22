@@ -27,8 +27,8 @@ def execute(context, cmd):
         print(out.replace('\n', '\n '))
     except CommandException as err:
         print(str(err))
-    except Exception as err:
-        traceback.print_exc()
+    # except Exception as err:
+    #     traceback.print_exc()
 
 def repl(context):
     session = PromptSession(history=FileHistory(REPL_HISTORY_FILE))

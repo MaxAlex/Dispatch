@@ -16,62 +16,37 @@ class Item: # Can be Step or Task
     @staticmethod
     def fromJson(jd):
         subtasks = [Task.fromJson(subtask) for subtask in jd['subtasks']]
+        steps = [Step.fromJson(step) for step in jd['steps']]
         for st in subtasks:
             st.parent = jd['num']
-
-        return Item()
-
-    def __init__(self, num, statement, status, deadline=None, created=None, completed=None,
-                 blocks=None, blocked_by=None, subtasks=None, note=''):
-        self.id = 'unused'
-        self.num = num
-        self.parent = None  # Parent is set during insertion, or "None" if top-level
-        self.statement = statement
-        self.deadline = deadline
-        self.created = created
-        self.completed = completed
-        self.status = status
-        self.blocks = blocks if blocks is not None else set()
-        self.blocked_by = blocked_by if blocked_by is not None else set()
-        self.subtasks = subtasks if subtasks is not None else []
-        self.note = note
-
-
-class Task(Item):
-    @staticmethod
-    def fromJson(jd):
-        subtasks = [Task.fromJson(subtask) for subtask in jd['subtasks']]
-        for st in subtasks:
+        for st in steps:
             st.parent = jd['num']
+        if steps:
+            print(steps)
 
-        return Task(
-            num=jd["num"], statement=jd['statement'], priority=jd['priority'],
+        return Item(num=str(jd["num"]).strip(), statement=jd['statement'],
             deadline=date.fromordinal(jd['deadline']) if jd['deadline'] is not None else None,
             created=datetime.fromisoformat(jd['created']) if jd.get('created', None) is not None else datetime.now(),
             completed=datetime.fromisoformat(jd['completed']) if jd.get('completed', None) is not None else None,
-            duration=timedelta(days=jd['duration']) if jd.get('duration', None) is not None else None,
             status=jd['status'], blocks=set(jd['blocks']), blocked_by=set(jd.get('blocked_by', [])),
-            subtasks=subtasks,
-            note=jd.get('note', '')
-        )
+            subtasks=subtasks, steps=steps,
+            note=jd.get('note', ''))
 
-    def __init__(self, num, statement, priority=5,
-                 deadline=None, created=None, completed=None, duration=None,
-                 status='Open', blocks=None, blocked_by=None,
-                 subtasks=None, note=''):
+    def __init__(self, num, statement, status='Open', deadline=None, created=None, completed=None,
+                 duration=None, blocks=None, blocked_by=None, subtasks=None, steps=None, note=''):
         self.id = 'unused'
         self.num = num
         self.parent = None  # Parent is set during insertion, or "None" if top-level
         self.statement = statement
-        self.priority = priority
         self.deadline = deadline
         self.created = created
         self.completed = completed
-        self.duration = duration
         self.status = status
+        self.duration = duration
         self.blocks = blocks if blocks is not None else set()
         self.blocked_by = blocked_by if blocked_by is not None else set()
         self.subtasks = subtasks if subtasks is not None else []
+        self.steps = steps if steps is not None else []
         self.note = note
 
     def toJson(self):
@@ -79,7 +54,6 @@ class Task(Item):
             "id": self.id,
             "num": self.num,
             "statement": self.statement,
-            "priority": self.priority,
             "deadline": self.deadline.toordinal() if self.deadline is not None else None,
             "created": self.created.isoformat() if self.created is not None else None,
             "completed": self.completed.isoformat() if self.completed is not None else None,
@@ -88,8 +62,10 @@ class Task(Item):
             "blocks": list(self.blocks),
             "blocked_by": list(self.blocked_by),
             "subtasks": [x.toJson() for x in self.subtasks],
+            "steps": [x.toJson() for x in self.steps],
             "note": self.note
         }
+
 
     # TODO better blocker handling eventually
     def getStatus(self):
@@ -109,6 +85,7 @@ class Task(Item):
             self.status = status
 
 
+    # Should this recurse into Steps?
     def getSubtaskCount(self, status=None):
         if status:
             # Does not consider blocking
@@ -116,6 +93,12 @@ class Task(Item):
                     sum([x.getSubtaskCount(status) for x in self.subtasks]))
         else:
             return len(self.subtasks) + sum([x.getSubtaskCount() for x in self.subtasks])
+
+    def getStepCount(self, status=None):
+        if not status:
+            return len(self.steps)
+        else:
+            return len([x for x in self.steps if x.status == status])
 
     def getSubtasks(self, status=None, not_status=None, recursive=False):
         if status:
@@ -127,6 +110,42 @@ class Task(Item):
         return tasks
 
 
+class Step(Item):
+    @staticmethod
+    def fromJson(jd):
+        item = Item.fromJson(jd)
+        item.__class__ = Step  # Janky!  But roughly valid.  Better way?
+        return item
+
+    # __init__ and toJson are identical with superclass
+
+
+class Task(Item):
+    @staticmethod
+    def fromJson(jd):
+        subtasks = [Task.fromJson(subtask) for subtask in jd['subtasks']]
+        steps = [Step.fromJson(step) for step in jd['steps']]
+        for st in subtasks:
+            st.parent = jd['num']
+        for st in steps:
+            st.parent = jd['num']
+
+        return Task(num=str(jd["num"]).strip(), statement=jd['statement'], priority=jd.get('priority', 5),
+            deadline=date.fromordinal(jd['deadline']) if jd['deadline'] is not None else None,
+            created=datetime.fromisoformat(jd['created']) if jd.get('created', None) is not None else datetime.now(),
+            completed=datetime.fromisoformat(jd['completed']) if jd.get('completed', None) is not None else None,
+            status=jd['status'], blocks=set(jd['blocks']), blocked_by=set(jd.get('blocked_by', [])),
+            subtasks=subtasks, steps=steps,
+            note=jd.get('note', ''))
+
+    def __init__(self, num, statement, priority=5, **kwargs):
+        self.priority = priority
+        super(Task, self).__init__(num, statement, **kwargs)
+
+    def toJson(self):
+        itemjson = super(Task, self).toJson()
+        itemjson["priority"] = self.priority
+        return itemjson
 
 class Context:
     def toJson(self):
@@ -150,6 +169,8 @@ class Context:
             i = {task.num: task}
             for subtask in task.subtasks:
                 i.update(_getIds(subtask))
+            for step in task.steps:
+                i.update(_getIds(step))
             return i
 
         lookup = {}
@@ -184,6 +205,10 @@ class Context:
         except ValueError:
             return 1
 
+    def getNextStepNumber(self, parent):
+        return "%s-%s" % (parent.num, len(parent.steps)+1)
+
+
     def addNew(self, newtask, parent=None):
         if parent:
             self.lookup[parent].subtasks.append(newtask)
@@ -204,6 +229,14 @@ class Context:
                 self.setTaskStatus(t, "Done")
 
         task.status = status
+
+    def insertStep(self, newstep, parent, index):
+        self.lookup[newstep.num] = newstep
+        newstep.parent = parent.num
+        parent.steps.insert(index, newstep)
+        # Should instead barf if it tries to add a step with out-of-order deadlines
+
+        return self.renderer.showTasks([parent], self.lookup[parent.parent] if parent.parent else None)
 
     # This can be replaced with call to insertTasks, right?
     def insertTask(self, newtask, parent=None, index=None):

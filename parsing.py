@@ -1,4 +1,4 @@
-from task import Task, POSSIBLE_STATUSES
+from task import Task, Step, POSSIBLE_STATUSES
 import re
 from collections import namedtuple
 from datetime import date, timedelta, datetime
@@ -19,22 +19,48 @@ import tempfile
 class CommandException(Exception):
     pass
 
-def eval_new(context, attributes, referent, location):
+def eval_new(context, itemtype, attributes, referent, location):
     # num = context.getNextNumber()
     created_at = datetime.now()
-    task = Task(num=context.getNextNumber(), created=created_at, **dict(attributes))
-    if location == 'before':
-        reftask = context.lookup[referent]
-        parent = reftask.parent
-        return context.insertTask(task, parent, parent.subtasks.index(reftask))
-    elif location == 'after':
-        reftask = context.lookup[referent]
-        parent = reftask.parent
-        return context.insertTask(task, parent, parent.subtasks.index(reftask)+1)
-    elif location == 'under' or (location is None and referent is None):
-        return context.insertTask(task, referent)
-    else:
-        raise CommandException("Invalid relative specification: '%s' and '%s'" % (location, referent))
+
+    if itemtype == 'task':
+        task = Task(num=context.getNextNumber(), created=created_at, **dict(attributes))
+        if location == 'before':
+            reftask = context.lookup[referent]
+            parent = reftask.parent
+            return context.insertTask(task, parent, parent.subtasks.index(reftask))
+        elif location == 'after':
+            reftask = context.lookup[referent]
+            parent = reftask.parent
+            return context.insertTask(task, parent, parent.subtasks.index(reftask)+1)
+        elif location == 'under' or (location is None and referent is None):
+            return context.insertTask(task, referent)
+        else:
+            raise CommandException("Invalid relative specification: '%s' and '%s'" % (location, referent))
+    elif itemtype == 'step':
+        if not location:
+            raise CommandException("A Step cannot be top-level (creation must use 'before', 'after' or 'under')")
+
+        if location in {'before', 'after'}:
+            refstep = context.lookup[referent]
+            if not isinstance(refstep, Step):
+                raise CommandException("A Step cannot be added 'before' or 'after' a Task")
+            parent = context.lookup[refstep.parent]
+        else:
+            parent = context.lookup[referent]
+            refstep = parent.steps[-1] if parent.steps else None
+
+        step = Step(num=context.getNextStepNumber(parent), created=created_at, **dict(attributes))
+
+        if location == 'before':
+            return context.insertStep(step, parent, parent.steps.index(refstep))
+        elif location == 'after':
+            return context.insertStep(step, parent, parent.steps.index(refstep)+1)
+        elif location == 'under':
+            return context.insertStep(step, parent, len(parent.steps))
+        else:
+            raise CommandException("Invalid relative specification: '%s' and '%s'" % (location, referent))
+
 
 def eval_move(context, task_nums, referent, location):
     tasks = context.popTasks(task_nums)
@@ -118,7 +144,7 @@ def eval_plan(context, task_scope, attribute):
 
 def evaluate(context, command):
     if command.type == "add_new":
-        return eval_new(context, command.attributes, command.ref_task, command.location)
+        return eval_new(context, command.item_type, command.attributes, command.ref_task, command.location)
     elif command.type == "move":
         return eval_move(context, command.tasks, command.ref_task, command.location)
     elif command.type == "set":
@@ -152,22 +178,22 @@ ATT_DEADLINE = """deadline (today|tomorrow|next week|[0-9]{,2}/[0-9]{,2}/[0-9]{,
 ATT_STATUS = """status (%s)""" % ('|'.join(POSSIBLE_STATUSES))
 ATT_DURATION = """duration ([0-9]+ weeks|[0-9]+ days)"""
 
-REL_LOC_CLAUSE = """((?P<location>under|before|after) (?P<loc_ref>[0-9]+))"""
-MULTITASK_CLAUSE = "(?P<tasks>[0-9,]+)"
+REL_LOC_CLAUSE = """((?P<location>under|before|after) (?P<loc_ref>[0-9-]+))"""
+MULTITASK_CLAUSE = "(?P<tasks>[0-9,-]+)"
 
-NEW = """new\s*(task)?\s*%s?\s*(?P<statement>".*")( with )?(?P<attributes>.*)?""" % REL_LOC_CLAUSE
-MOVE = """move\s*(task)?\s*(?P<moved_t>[0-9]+)\s*%s""" % REL_LOC_CLAUSE
-SET = """set\s*(task)?\s*(?P<tasks>[0-9, ]+)\s*(?P<attributes>.*)?"""
-BLOCK = """(task)?\s*(?P<blockers>[0-9, ]+)\s*blocks\s*(?P<blockees>[0-9, ]+)"""
-SHOW = """show\s*(?P<tasks>[0-9, ]+)?\s*(?P<details>details)?"""  # TODO more show options
-NOTE = """annotate\s*(?P<task>[0-9]+)"""
-CLEANUP = """cleanup\s*(?P<tasks>([0-9, ]+|all))\s*(?P<reorder>and reorder)?"""
-PLAN = """plan\s*(?P<target>task [0-0, ]+)\s*(by)?\s(?P<attribute>(newest|oldest|deadline|priority))"""
+NEW = """new\s*(?P<type>task|step)?\s*%s?\s*(?P<statement>".*")( with )?(?P<attributes>.*)?""" % REL_LOC_CLAUSE
+MOVE = """move\s*(task|step)?\s*(?P<moved_t>[0-9-]+)\s*%s""" % REL_LOC_CLAUSE
+SET = """set\s*(task|step)?\s*(?P<items>[0-9, -]+)\s*(?P<attributes>.*)?"""
+BLOCK = """(task|step)?\s*(?P<blockers>[0-9, -]+)\s*blocks\s*(?P<blockees>[0-9, ]+)"""
+SHOW = """show\s*(?P<items>[0-9, -]+)?\s*(?P<details>details)?"""  # TODO more show options
+NOTE = """annotate\s*(?P<item>[0-9-]+)"""
+CLEANUP = """cleanup\s*(?P<items>([0-9, -]+|all))\s*(?P<reorder>and reorder)?"""
+PLAN = """plan\s*(?P<target>task [0-9, -]+)\s*(by)?\s(?P<attribute>(newest|oldest|deadline|priority))"""
 
-Command = namedtuple('Command', ['type', 'task', 'tasks', 'ref_task',
+Command = namedtuple('Command', ['type', 'item_type', 'task', 'tasks', 'ref_task',
                                  'ref_tasks', 'attributes', 'location',
                                  'arg'],
-                     defaults=[None]*8)
+                     defaults=[None]*9)
 
 
 def resolve_time(string):
@@ -213,31 +239,32 @@ def parse_attribute(att_string):
 
 def parse_toplevel(command):
     if newcmd := re.match(NEW, command):
+        itemtype = t if (t := newcmd.group("type")) is not None else None
         statement = newcmd.group("statement").strip('"')
         loc_rel = newcmd.group("location")
-        loc_ref = int(n) if (n := newcmd.group("loc_ref")) is not None else None
+        loc_ref = n if (n := newcmd.group("loc_ref")) is not None else None
         attributes = [parse_attribute(x.strip()) for x in newcmd.group("attributes").split(',') if x.strip()]
         attributes.append(("statement", statement))
         if len(attributes) != len(set(att_types := [x[0] for x in attributes])):
             raise CommandException("Duplicated task attributes: %s" %
                                ', '.join([x for x in set(att_types) if att_types.count(x) > 1]))
-        return Command("add_new", attributes=attributes, ref_task=loc_ref, location=loc_rel)
+        return Command("add_new", item_type=itemtype, attributes=attributes, ref_task=loc_ref, location=loc_rel)
     elif movcmd := re.match(MOVE, command):
-        moved_t = [int(x) for x in movcmd.group("moved_t").split(',')]
-        ref_t = int(n) if (n := movcmd.group("loc_ref")) is not None else None
+        moved_t = [x.strip() for x in movcmd.group("moved_t").split(',')]
+        ref_t = n if (n := movcmd.group("loc_ref")) is not None else None
         loc_rel = movcmd.group("location")
         return Command("move", tasks=moved_t, ref_task=ref_t, location=loc_rel)
     elif setcmd := re.match(SET, command):
-        tasks = [int(x) for x in setcmd.group("tasks").split(',')]
+        tasks = [x.strip() for x in setcmd.group("items").split(',')]
         attributes = [parse_attribute(x.strip()) for x in setcmd.group("attributes").split(',') if x.strip()]
         return Command("set", tasks=tasks, attributes=attributes)
     elif blockcmd := re.match(BLOCK, command):
-        blockers = [int(x) for x in blockcmd.group("blockers").split(',')]
-        blockees = [int(x) for x in blockcmd.group("blockees").split(',')]
+        blockers = [x.strip() for x in blockcmd.group("blockers").split(',')]
+        blockees = [x.strip() for x in blockcmd.group("blockees").split(',')]
         return Command("block", tasks=blockees, ref_tasks=blockers)  # ref_tasks block tasks
     elif showcmd := re.match(SHOW, command):
-        if (taskstr := showcmd.group("tasks")) is not None:
-            tasks = [int(n) for n in taskstr.split(',')]
+        if (taskstr := showcmd.group("items")) is not None:
+            tasks = [n.strip() for n in taskstr.split(',')]
         else:
             tasks = None
         details = showcmd.group("details") is not None
@@ -246,18 +273,18 @@ def parse_toplevel(command):
         else:
             return Command("show", tasks=tasks)
     elif notecmd := re.match(NOTE, command):
-        task = int(notecmd.group("task").strip())
+        task = notecmd.group("item").strip()
         return Command("note", tasks=[task])
     elif cleancmd := re.match(CLEANUP, command):
-        taskstr = cleancmd.group("tasks")
+        taskstr = cleancmd.group("items")
         if taskstr == "all":
             tasks = "all"
         else:
-            tasks = [int(n) for n in taskstr.split(',')]
+            tasks = [n.strip() for n in taskstr.split(',')]
         return Command("cleanup", tasks=tasks, arg=cleancmd.group("reorder"))
     elif plancmd := re.match(PLAN, command):
         if task_str := plancmd.group("target"):
-            tasks = [int(t) for t in task_str.strip("task ").split(',')]
+            tasks = [t.strip() for t in task_str.strip("task ").split(',')]
         else:
             tasks = None
         attribute = plancmd.group("attribute")

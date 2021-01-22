@@ -116,33 +116,54 @@ class Renderer:
             else:
                 return Renderer.dateColors(dl, f"Overdue from {intuitiveDate(dl)}")
 
-    def taskInfo(self, task):
-        prioritySegment = self.priorityColors(task.priority, str(task.priority))
+    def itemInfo(self, item, include_sub=False):
+        if hasattr(item, 'priority'):
+            prioritySegment = self.priorityColors(item.priority, str(item.priority))
+        else:
+            prioritySegment = None
 
-        statusSegment = self.statusColors(task.getStatus())
+        statusSegment = self.statusColors(item.getStatus())
 
-        if task.deadline is None:
+        if item.deadline is None:
             deadlineSegment = None
         else:
-            deadlineSegment = self.renderDeadline(task.deadline)
+            deadlineSegment = self.renderDeadline(item.deadline)
 
-        if (stc := task.getSubtaskCount()):
-            subtaskSegment = "%s/%s subtasks" % (task.getSubtaskCount("Done"), stc)
+        if include_sub and (stc := item.getSubtaskCount()):
+            subtaskSegment = "%s/%s subtasks" % (item.getSubtaskCount("Done"), stc)
         else:
             subtaskSegment = None
 
-        if task.duration is None:
+        if include_sub and (sc := item.getStepCount()):
+            stepSegment = "%s/%s steps" % (item.getStepCount("Done"), sc)
+        else:
+            stepSegment = None
+
+        if item.duration is None:
             durationSegment = None
         else:
-            durationSegment = f"{task.duration.days} days"
+            durationSegment = f"{item.duration.days} days"
 
-        return ' - '.join([x for x in [prioritySegment, statusSegment, deadlineSegment, durationSegment, subtaskSegment] if x is not None])
-        # return '{priority} - {status} - {dl}{subtaskstr}'.format(
-        #     priority=self.priorityColors(task.priority, str(task.priority)),
-        #     status=self.statusColors(task.getStatus()),
-        #     dl=self.dateColors(task.deadline),
-        #     subtaskstr=subtaskstr
-        # )
+        if include_sub and item.note:
+            noteSegment = c.NOTE("Note")
+        else:
+            noteSegment = None
+
+
+        return ' - '.join([x for x in [prioritySegment, statusSegment, deadlineSegment,
+                                       durationSegment, stepSegment, subtaskSegment]
+                           if x is not None])
+
+
+    # IND_PLACEHOLD = 'INDENTATION!'
+    # # renderTree handles overall tree structure, and calls renderTask and renderStep for
+    # # individual Task/Step lines (which can themselves be multilines, for notes and etc)
+    # # This also handles tree-structure indentation!
+    # def renderTree(self, baseitem, levels, include_done=False):
+    #     lines = renderTask(baseitem) if
+
+    def renderStep(self, step):
+        return f'{step.num}. {step.statement} - {self.itemInfo(step, include_sub=True)}'
 
     # Task renderer behavior dependent on "level", which decreases as one goes
     # into sub-tasks
@@ -156,11 +177,13 @@ class Renderer:
         if level <= 0:
             return '{ind}#{num}. {statement}  { {info} }'.format(
                 ind=indentstr, num=task.num, statement=self.priorityColors(task.priority, f'"{task.statement}"'),
-                info=self.taskInfo(task)
+                info=self.itemInfo(task, include_sub=True)
             )
         else:
             subtasks = "\n".join([self.renderTask(t, level-1, indent=indent+1) for t in task.subtasks
                                   if (include_done or t.getStatus() != 'Done')])
+            substeps = f"\n".join([f"{indentstr}       | " + self.renderStep(s) for s in task.steps]) + '\n'
+            
             # TODO once Renderer is made aware of screen size, properly right-justify this?
             if task.note:
                 if ('\n' in task.note.strip()) or len(task.note.split('\n')[0]) >= 60:
@@ -170,14 +193,21 @@ class Renderer:
                 noteline = c.NOTE((' '*(80-len(notestub)))+notestub)
             else:
                 noteline = ""
-            return '{ind}#{num}. {statement} {{ {info} }} \n{noteline}{subtasks}'.format(
-                ind=indentstr, num=task.num, statement=self.priorityColors(task.priority, f'"{task.statement}"'),
-                info=self.taskInfo(task), noteline=noteline,
+
+            if hasattr(task, 'priority'):
+                statement_str = self.priorityColors(task.priority, f'"{task.statement}"')
+            else:
+                statement_str = task.statement
+
+            return '{ind}#{num}. {statement} {{ {info} }} \n{noteline}{substeps}{subtasks}'.format(
+                ind=indentstr, num=task.num, statement=statement_str,
+                info=self.itemInfo(task), noteline=noteline,
+                substeps='\n'+substeps if task.steps else "",
                 subtasks='\n'+subtasks if subtasks else ""
             )
 
     def summary(self):
-        openTasks = [x for x in self.context.lookup.values() if x.getStatus() != "Done"]
+        openTasks = [x for x in self.context.lookup.values() if hasattr(x, 'priority') and x.getStatus() != "Done"]
         # highestp = max(openTasks, key=lambda x: x.priority)
         highestp = min(_allmin(openTasks, key=lambda x: -x.priority if x.priority is not None else date.max),
                        key=lambda x: x.deadline if x.deadline is not None else date.max)
@@ -218,7 +248,6 @@ class Renderer:
         else:
             duration_str = "None"
 
-
         lines = [pline,
                  f'#{task.num}. "{self.priorityColors(task.priority, task.statement, is_done)}"',
                  f"\tPriority: {self.priorityColors(task.priority, str(task.priority), is_done)}",
@@ -231,6 +260,10 @@ class Renderer:
 
         if task.getStatus() == "Done":
             lines.append(f"\tCompleted: {task.completed.isoformat(sep=' ', timespec='minutes')}")
+
+        if task.steps:
+            steplines = ["\t\t" + f'{st.num}. {st.statement} - {st.status}' for st in task.steps]
+            lines.append(f"\n\t{len(task.steps)} steps:\n" + '\n'.join(steplines))
 
         active_subtasks = task.getSubtasks(not_status="Done", recursive=False)
         if active_subtasks:
